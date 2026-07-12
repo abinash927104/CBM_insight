@@ -103,12 +103,182 @@ COLOR_GREEN = "#77BA4A"
 COLOR_GREY = "#718096"
 COLOR_DARK = "#2D3748"
 
-from data_processor import load_and_process_data, calculate_kpis, get_top_cause, get_top_location, AGEING_OUTLIER_THRESHOLD
+AGEING_OUTLIER_THRESHOLD = 25
+
+def load_and_process_data(file):
+    from io import BytesIO
+    try:
+        # Read the file into bytes once so we can read it multiple times
+        if hasattr(file, 'read'):
+            file_bytes = file.read()
+        else:
+            with open(file, 'rb') as f:
+                file_bytes = f.read()
+
+        # First pass: detect the actual header row
+        df_raw = pd.read_excel(BytesIO(file_bytes), header=None)
+        
+        header_idx = 0
+        max_matches = 0
+        keywords = ['location', 'date', 'plant', 'status', 'cause', 'notification', 'order', 'section', 'type', 'description']
+        
+        for i in range(min(15, len(df_raw))):
+            row_vals = [str(x).lower() for x in df_raw.iloc[i].values if pd.notna(x)]
+            matches = sum(1 for kw in keywords for val in row_vals if kw in val)
+            if matches > max_matches:
+                max_matches = matches
+                header_idx = i
+                
+        # Second pass: read with the correct header
+        df = pd.read_excel(BytesIO(file_bytes), header=header_idx)
+        
+        # Drop completely empty rows
+        df = df.dropna(how='all')
+        
+        # Clean up column names (strip whitespace)
+        df.columns = [str(c).strip() for c in df.columns]
+        all_cols = list(df.columns)
+        
+        # --- Helper: find first column whose name contains any of the keywords ---
+        def find_col(possible_names, exclude_cols=None):
+            for col in all_cols:
+                col_lower = str(col).lower()
+                if exclude_cols and col in exclude_cols:
+                    continue
+                for name in possible_names:
+                    if name.lower() in col_lower:
+                        return col
+            return None
+        
+        # ============================================================
+        # COLUMN MAPPING (based on actual data: Planning Plant, 
+        # Notifictn Type, Notif. Date, Location, Main WorkCtr, 
+        # Plant Section, Notification, Order, Required Start, 
+        # MaintenancePlan, etc.)
+        # ============================================================
+        
+        # 1. Location → Location_Clean
+        loc_col = find_col(["location"])
+        if not loc_col:
+            loc_col = find_col(["area", "dept", "department", "zone", "section"])
+        if loc_col:
+            df["Location_Clean"] = df[loc_col].astype(str).str.strip()
+            df.loc[df["Location_Clean"].isin(["nan", "None", ""]), "Location_Clean"] = "Unknown"
+        else:
+            df["Location_Clean"] = "Unknown"
+        
+        # 2. Smelter — look for "smelter" first, then "planning plant", then "plant" (but NOT "plant section")
+        smelt_col = find_col(["smelter"])
+        if not smelt_col:
+            smelt_col = find_col(["planning plant"])
+        if not smelt_col:
+            # "plant" but exclude columns containing "section" or "maintenance"
+            for col in all_cols:
+                col_lower = str(col).lower()
+                if "plant" in col_lower and "section" not in col_lower and "maintenance" not in col_lower:
+                    smelt_col = col
+                    break
+        if smelt_col:
+            df["Smelter"] = df[smelt_col].astype(str).str.strip()
+            df.loc[df["Smelter"].isin(["nan", "None", ""]), "Smelter"] = "Unknown"
+        else:
+            df["Smelter"] = "Unknown"
+        
+        # 3. Status → StatusLabel — look for columns with "status" or "type"
+        stat_col = find_col(["status"])
+        if not stat_col:
+            stat_col = find_col(["notifictn type", "notification type", "type"])
+        if stat_col:
+            df["StatusLabel"] = df[stat_col].astype(str).str.strip()
+            df.loc[df["StatusLabel"].isin(["nan", "None", ""]), "StatusLabel"] = "Other"
+        else:
+            df["StatusLabel"] = "Other"
+        
+        # 4. Cause → Cause_Clean
+        cause_col = find_col(["cause", "reason", "defect", "fault"])
+        if cause_col:
+            df["Cause_Clean"] = df[cause_col].astype(str).str.strip()
+            df.loc[df["Cause_Clean"].isin(["nan", "None", ""]), "Cause_Clean"] = "Unknown"
+        else:
+            df["Cause_Clean"] = "Unknown"
+        
+        # 5. Technology / Description
+        tech_col = find_col(["technology", "description", "equipment", "asset"])
+        if tech_col:
+            df["Technology"] = df[tech_col].astype(str).str.strip()
+            df.loc[df["Technology"].isin(["nan", "None", ""]), "Technology"] = "Unknown"
+        else:
+            df["Technology"] = "Unknown"
+            
+        # 6. Date → Notif. Date & MonthSort
+        #    Prefer "Notif. Date" or "Notif Date" exactly, then fallback
+        date_col = None
+        for col in all_cols:
+            if "notif" in str(col).lower() and "date" in str(col).lower():
+                date_col = col
+                break
+        if not date_col:
+            date_col = find_col(["date", "created", "reported"])
+            
+        if date_col:
+            parsed_dates = pd.to_datetime(df[date_col], errors='coerce')
+            valid_mask = parsed_dates.notna()
+            # Only proceed if at least some dates parsed
+            if valid_mask.sum() > 0:
+                df["Notif. Date"] = parsed_dates
+                # Fill unparseable dates with the median valid date instead of dropping
+                median_date = df.loc[valid_mask, "Notif. Date"].median()
+                df["Notif. Date"] = df["Notif. Date"].fillna(median_date)
+            else:
+                df["Notif. Date"] = pd.to_datetime("today").normalize()
+            df["MonthSort"] = df["Notif. Date"].dt.to_period('M').dt.to_timestamp()
+        else:
+            df["Notif. Date"] = pd.to_datetime("today").normalize()
+            df["MonthSort"] = pd.to_datetime("today").normalize()
+        
+        # 7. Ageing
+        age_col = find_col(["ageing", "age", "days", "duration"])
+        if age_col:
+            df["Ageing"] = pd.to_numeric(df[age_col], errors='coerce').fillna(0)
+            df["AgeingClean"] = df["Ageing"].clip(upper=AGEING_OUTLIER_THRESHOLD)
+        else:
+            df["Ageing"] = 0
+            df["AgeingClean"] = 0
+
+        # Debug: show what was mapped (AFTER all processing)
+        st.sidebar.success(f"✅ Loaded {len(df)} rows")
+        mapped_info = []
+        if loc_col: mapped_info.append(f"Location ← '{loc_col}'")
+        if smelt_col: mapped_info.append(f"Smelter ← '{smelt_col}'")
+        if date_col: mapped_info.append(f"Date ← '{date_col}'")
+        if stat_col: mapped_info.append(f"Status ← '{stat_col}'")
+        if cause_col: mapped_info.append(f"Cause ← '{cause_col}'")
+        st.sidebar.caption("Column mapping:\n" + "\n".join(mapped_info))
+
+        return df
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return pd.DataFrame()
+
+def calculate_kpis(df):
+    return {}
+
+def get_top_location(df):
+    if df is None or df.empty or "Location_Clean" not in df.columns: return "N/A", 0
+    vc = df["Location_Clean"].value_counts()
+    return (vc.index[0], vc.iloc[0]) if not vc.empty else ("N/A", 0)
+
+def get_top_cause(df, exclude_hotspot=True):
+    if df is None or df.empty or "Cause_Clean" not in df.columns: return "N/A", 0
+    if exclude_hotspot: df = df[df["Cause_Clean"] != "Hotspot"]
+    vc = df["Cause_Clean"].value_counts()
+    return (vc.index[0], vc.iloc[0]) if not vc.empty else ("N/A", 0)
 
 # ---------------------------------------------------------
 # DATA LOADING & PROCESSING
 # ---------------------------------------------------------
-@st.cache_data
 def load_data(file):
     return load_and_process_data(file)
 
