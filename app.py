@@ -203,10 +203,22 @@ def load_and_process_data(file):
             df["Cause_Clean"] = "Unknown"
         
         # 5. Technology / Description
-        tech_col = find_col(["technology", "description", "equipment", "asset"])
+        tech_col = find_col(["technology"])
+        desc_col = find_col(["description", "equipment", "asset", "text"])
+        
         if tech_col:
             df["Technology"] = df[tech_col].astype(str).str.strip()
             df.loc[df["Technology"].isin(["nan", "None", ""]), "Technology"] = "Unknown"
+        elif desc_col:
+            def extract_tech(desc):
+                desc_upper = str(desc).strip().upper()
+                if desc_upper.startswith("VA"): return "Vibration (VA)"
+                if desc_upper.startswith("THV"): return "Thermography (THV)"
+                if "OIL" in desc_upper[:10]: return "Oil Analysis"
+                if "GREASE" in desc_upper[:10]: return "Grease Analysis"
+                if "THICKNESS" in desc_upper[:15]: return "Thickness"
+                return "Other"
+            df["Technology"] = df[desc_col].apply(extract_tech)
         else:
             df["Technology"] = "Unknown"
             
