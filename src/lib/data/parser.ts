@@ -53,7 +53,7 @@ export function normalizeData(rawData: any[]): CNDataRecord[] {
     return found || possibleNames[0];
   };
 
-  const colPlant = getCol(['Plant', 'Planning Plant']);
+  const colPlant = getCol(['Planning Plant', 'Plant']);
   const colNotif = getCol(['Notif', 'Notification', 'Notification No']);
   const colNotifDate = getCol(['Notif. Date', 'Notification Date', 'Date']);
   const colLocation = getCol(['Location']);
@@ -103,11 +103,10 @@ export function normalizeData(rawData: any[]): CNDataRecord[] {
     const notificationDate = parseDate(row[colNotifDate]) || '';
     const completionDate = parseDate(row[colCompletionDate]);
     
-    // 3. Determine status based on Python logic
+    // 3. Determine status based on System status logic
     const sysStat = String(row[colSystemStatus] || '').toUpperCase();
-    const userStat = String(row[colUserStatus] || '').toUpperCase();
-    // Python script: df["StatusLabel"] = df["User status"].map({"CRT": "Open (CRT)", "MRG": "Closed (MRG)"})
-    const isOpen = userStat === 'CRT' || (!userStat.includes('MRG') && !sysStat.includes('NOCO'));
+    const isClosed = sysStat.includes('NOCO') || sysStat.includes('NACO');
+    const isOpen = !isClosed;
 
     // 4. Derive Technology strictly based on Python script
     const desc = String(row[colDesc] || '').toUpperCase();
@@ -166,15 +165,14 @@ export function normalizeData(rawData: any[]): CNDataRecord[] {
 }
 
 export function applyDynamicMappings(data: CNDataRecord[]): CNDataRecord[] {
-  // 1. Plant ID mapping (Sort unique IDs, map to Smelter 1, Smelter 2...)
-  const uniquePlants = Array.from(new Set(data.map(d => d.plantId).filter(p => p !== ''))).sort();
-  const plantMap: Record<string, string> = {};
-  uniquePlants.forEach((pid, idx) => {
-    plantMap[pid] = `Smelter ${idx + 1}`;
-  });
+  return data.map(record => {
+    let pname = record.plantId;
+    if (String(record.plantId).includes('3101')) pname = 'Plant 1';
+    else if (String(record.plantId).includes('3102')) pname = 'Plant 2';
 
-  return data.map(record => ({
-    ...record,
-    plantName: plantMap[record.plantId] || 'Unknown',
-  }));
+    return {
+      ...record,
+      plantName: pname,
+    };
+  });
 }

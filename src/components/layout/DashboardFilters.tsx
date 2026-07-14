@@ -46,8 +46,8 @@ export default function DashboardFilters() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All Status</SelectItem>
-            <SelectItem value="OPEN">Open (CRT)</SelectItem>
-            <SelectItem value="CLOSED">Closed (MRG)</SelectItem>
+            <SelectItem value="OPEN">Open</SelectItem>
+            <SelectItem value="CLOSED">Closed</SelectItem>
           </SelectContent>
         </Select>
       </div>

@@ -31,9 +31,9 @@ export default function ExecutiveDashboard() {
     
     const totalCN = data.length;
     
-    // Smelter Splits
-    const s1CN = data.filter(d => d.plantName === 'Smelter 1').length;
-    const s2CN = data.filter(d => d.plantName === 'Smelter 2').length;
+    // Plant Splits
+    const s1CN = data.filter(d => d.plantName === 'Plant 1').length;
+    const s2CN = data.filter(d => d.plantName === 'Plant 2').length;
     
     // Closure calculations
     const closedData = data.filter(d => !d.isOpen && d.completionDate && d.notificationDate);
@@ -125,14 +125,14 @@ export default function ExecutiveDashboard() {
           delay={0.1} 
         />
         <KPICard 
-          title="Smelter 1 CNs" 
+          title="Plant 1 CNs" 
           value={kpis.s1CN} 
           subtitle={`${kpis.s1Pct}% of total`} 
           color="border-blue-400 text-blue-500"
           delay={0.15} 
         />
         <KPICard 
-          title="Smelter 2 CNs" 
+          title="Plant 2 CNs" 
           value={kpis.s2CN} 
           subtitle={`${kpis.s2Pct}% of total`} 
           color="border-teal-500 text-teal-600"
@@ -147,14 +147,14 @@ export default function ExecutiveDashboard() {
         />
         
         <KPICard 
-          title="Open (CRT)" 
+          title="Open" 
           value={kpis.openCN} 
           subtitle={`${kpis.openPct}% of total CNs`} 
           color="border-red-500 text-red-600"
           delay={0.3} 
         />
         <KPICard 
-          title="Closed (MRG)" 
+          title="Closed" 
           value={kpis.closedCN} 
           subtitle={`${kpis.closedPct}% of total CNs`} 
           color="border-green-500 text-green-600"
@@ -185,7 +185,7 @@ export default function ExecutiveDashboard() {
           delay={0.5} 
         />
         <KPICard 
-          title="Most Critical Area (CRT %)" 
+          title="Most Critical Area (Open %)" 
           value={kpis.criticalArea} 
           subtitle={`${kpis.criticalAreaPct}% open CNs — needs attention`} 
           color="border-red-600 text-red-600"
